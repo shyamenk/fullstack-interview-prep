@@ -1,5 +1,20 @@
 # React Interview Questions & Answers
 
+## Table of Contents
+
+1. [What is the Virtual DOM in React? Can you explain it with a simple analogy?](#q1-what-is-the-virtual-dom-in-react-can-you-explain-it-with-a-simple-analogy)
+2. [How do React hooks like useState and useEffect work under the hood?](#q2-how-do-react-hooks-like-usestate-and-useeffect-work-under-the-hood)
+3. [What is the difference between controlled and uncontrolled components?](#q3-what-is-the-difference-between-controlled-and-uncontrolled-components)
+4. [Why do we need keys in React lists?](#q4-why-do-we-need-keys-in-react-lists)
+5. [Can you explain what "lifting state up" means with an example?](#q5-can-you-explain-what-lifting-state-up-means-with-an-example)
+6. [How does React handle re-rendering optimization? (memo, useCallback, etc.)](#q6-how-does-react-handle-re-rendering-optimization-memo-usecallback-etc)
+7. [What is the difference between client-side rendering (CSR) and server-side rendering (SSR)?](#q7-what-is-the-difference-between-client-side-rendering-csr-and-server-side-rendering-ssr)
+8. [What is the difference between synchronous and asynchronous JavaScript?](#q8-what-is-the-difference-between-synchronous-and-asynchronous-javascript)
+9. [How do Promises and async/await simplify asynchronous code?](#q9-how-do-promises-and-asyncawait-simplify-asynchronous-code)
+10. [Can you explain how the event loop works in JavaScript?](#q10-can-you-explain-how-the-event-loop-works-in-javascript)
+
+---
+
 ## Q1. What is the Virtual DOM in React? Can you explain it with a simple analogy?
 
 ### Key Points (easy to remember):
