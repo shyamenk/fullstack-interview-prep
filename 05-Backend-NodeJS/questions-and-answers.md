@@ -1,5 +1,12 @@
 # Node.js Interview Questions & Answers
 
+## Table of Contents
+
+1. [How does Node.js handle many concurrent requests with a single thread?](#q1-how-does-nodejs-handle-many-concurrent-requests-with-a-single-thread)
+2. [What is middleware in Express? Example use case?](#q2-what-is-middleware-in-express-example-use-case)
+
+---
+
 ## Q1. How does Node.js handle many concurrent requests with a single thread?
 
 ### Concept:
@@ -67,108 +74,5 @@ Every passenger (request) passes through it for checks (authentication, logging,
 
 ### ⚡ One-liner to remember:
 > Middleware = Functions that run between request and response, with access to req, res, and next().
-
----
-
-## Q3. How do you handle authentication and authorization in a Node.js app?
-
-### Concept:
-
-- **Authentication:** Verifying the user's identity (who they are)
-- **Authorization:** Determining what resources the user can access (permissions)
-
-### Example Flow (Email + Password + JWT):
-
-1. **User signs up** → Server hashes password with salt (using bcrypt) → Stores in DB
-2. **User logs in** → Server hashes entered password → Compares with DB hash
-3. **If valid** → Server generates JWT token → Sends to client
-4. **For each protected route request** → Client sends JWT in header → Server verifies token → Grants access
-
-### Common implementations:
-
-- **Session-based:** Server stores session, sends session ID to client via cookie
-- **Token-based (JWT):** Stateless, self-contained tokens
-- **OAuth 2.0:** Third-party authentication (Google, GitHub, etc.)
-- **Passport.js:** Popular authentication middleware for Node.js
-
-### Code example:
-
-```javascript
-// Authentication middleware
-const jwt = require('jsonwebtoken');
-
-function authenticate(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token provided' });
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-}
-
-// Authorization middleware
-function authorize(roles) {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-    next();
-  };
-}
-```
-
-### Analogy:
-
-- **Authentication** → Showing your ID at the entrance (proving who you are)
-- **Authorization** → Getting a keycard that opens only the rooms you're allowed to enter (what you can access)
-
-### ⚡ One-liner to remember:
-> Authentication = "Who are you?" Authorization = "What can you do?"
-
----
-
-## Q4. What's the difference between JWT and sessions/cookies?
-
-### JWT (JSON Web Token):
-
-- A **stateless, self-contained token** used for authentication and optionally for authorization
-- Contains user info (like user ID, roles) and a signature
-- Sent in HTTP headers (usually `Authorization: Bearer <token>`)
-- Server does **not need to store session state** — verification happens using the token signature
-- Lightweight and scalable (great for APIs, microservices)
-
-**Authentication vs Authorization:**
-- JWT authenticates the user (verifies identity)
-- Can also carry roles/permissions, helping with authorization
-
-### Sessions/Cookies:
-
-- **Session:** Server stores user info in memory or database, and assigns a session ID
-- **Cookie:** Small data stored in the browser, usually contains the session ID
-- Server checks the session ID to authenticate the user
-- Can be **vulnerable if not secured** (HTTPOnly, Secure, SameSite flags)
-- State is stored on the server (stateful), which can be a scaling bottleneck
-
-### Comparison Table:
-
-| Feature          | JWT                             | Session + Cookie                  |
-|-----------------|---------------------------------|----------------------------------|
-| State           | Stateless                        | Stateful                        |
-| Storage         | Client-side (token)              | Server-side (session ID)         |
-| Scalability     | Easy to scale                     | Requires shared session storage  |
-| Security        | Signature prevents tampering      | Needs secure cookies (HTTPOnly) |
-| Use case        | APIs, microservices, mobile apps | Traditional web apps             |
-
-### Analogy:
-
-- **JWT** → A sealed envelope with your ID and permissions, anyone can check it without asking the issuer again
-- **Session + Cookie** → You get a numbered ticket at the counter, server keeps track of your info; you must present the ticket each time
-
-### ⚡ One-liner to remember:
-> JWT = stateless token. Session + Cookie = stateful server storage.
 
 ---

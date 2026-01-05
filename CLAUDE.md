@@ -79,3 +79,34 @@ The main README.md contains a phased study roadmap (8 weeks) and progress tracki
 - Interview questions include complexity analysis and multiple approaches
 - Code examples demonstrate best practices and common patterns
 - Real-world analogies help explain complex concepts
+
+## Documentation Enhancements
+
+### Adding Table of Contents to Q&A Files
+
+When working with `questions-and-answers.md` files, add a table of contents at the top with anchor links:
+
+1. Create numbered list with question titles
+2. Use markdown anchor format: `[Question Title](#q1-question-title-in-lowercase-with-hyphens)`
+3. Place after the main heading, before first question
+4. Separate TOC from content with `---`
+
+Example format:
+```markdown
+# [Topic] Interview Questions & Answers
+
+## Table of Contents
+
+1. [Question 1](#q1-question-1)
+2. [Question 2](#q2-question-2)
+
+---
+
+## Q1. Question 1
+```
+
+### Cross-Folder References
+
+When referencing content across folders, use the numbered folder structure (e.g., "See 09-Database-PostgreSQL for indexing strategies").
+- I need you to remmeber when i adding questions and answers you must update the table of contents in each file
+- Before adding note analyze one or two similar files and foloow the same structure of the docs
