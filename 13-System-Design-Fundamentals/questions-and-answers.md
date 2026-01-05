@@ -8,6 +8,11 @@
 4. [What is the difference between Offset-based and Cursor-based pagination?](#q4-what-is-the-difference-between-offset-based-and-cursor-based-pagination)
 5. [How do you implement rate limiting and what algorithms are used?](#q5-how-do-you-implement-rate-limiting-and-what-algorithms-are-used)
 6. [How do you implement caching in a Next.js PostgreSQL app?](#q6-how-do-you-implement-caching-in-a-nextjs-postgresql-app)
+7. [How would you design a scalable notification system?](#q7-how-would-you-design-a-scalable-notification-system)
+8. [REST vs GraphQL - when to use each?](#q8-rest-vs-graphql---when-to-use-each)
+9. [Why is API versioning needed and what are its advantages?](#q9-why-is-api-versioning-needed-and-what-are-its-advantages)
+10. [What is idempotency and why is it critical for APIs?](#q10-what-is-idempotency-and-why-is-it-critical-for-apis)
+11. [How do you design an idempotent payment API?](#q11-how-do-you-design-an-idempotent-payment-api)
 
 ---
 
@@ -3331,5 +3336,1631 @@ Think of caching like a **library system**:
 
 ### ⚡ One-liner to remember:
 > Next.js caching = ISR for pages, Redis for API data, React Query for client-side, invalidate on updates.
+
+---
+
+## Q7. How would you design a scalable notification system?
+
+### Concept:
+
+A scalable notification system handles multi-channel delivery (email, SMS, push) with different priority levels, automatic retries, and failure handling.
+
+### Requirements (Clarify First):
+
+| Requirement | Details |
+|-------------|---------|
+| **Channels** | Email, SMS, Push notifications |
+| **Volume** | 200+ daily (can scale to millions) |
+| **Priority** | Critical alerts = real-time, Reports = batched |
+| **Reliability** | Automatic retries, failure tracking |
+| **Delivery Status** | Track sent/delivered/failed |
+
+---
+
+## Architecture
+
+```
+┌──────────┐     ┌─────────┐     ┌──────────┐     ┌───────────┐
+│   App    │ ──▶ │   SQS   │ ──▶ │  Lambda  │ ──▶ │ Channels  │
+│(Producer)│     │ (Queue) │     │ (Worker) │     │ SES/SNS   │
+└──────────┘     └─────────┘     └──────────┘     └───────────┘
+                      │                                 │
+                      ▼                                 ▼
+                 ┌─────────┐                     ┌───────────┐
+                 │   DLQ   │                     │ DynamoDB  │
+                 │(Failures)│                     │ (Status)  │
+                 └─────────┘                     └───────────┘
+```
+
+**Components:**
+1. **Producer (App)** - Sends notification requests
+2. **SQS Queue** - Decouples producer/consumer, handles spikes
+3. **Lambda Worker** - Processes notifications, sends to channels
+4. **Channels** - SES (email), SNS (SMS), Firebase (push)
+5. **DLQ** - Captures failed messages for retry
+6. **DynamoDB** - Tracks delivery status
+
+---
+
+## Implementation
+
+### 1. Producer (App sends to queue)
+
+```typescript
+// src/services/notificationService.ts
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+
+const sqs = new SQSClient({ region: "us-east-1" });
+
+interface Notification {
+  userId: string;
+  type: "email" | "sms" | "push";
+  priority: "high" | "low";
+  template: string;
+  data: Record<string, any>;
+  recipient: {
+    email?: string;
+    phone?: string;
+    deviceToken?: string;
+  };
+}
+
+export async function sendNotification(notification: Notification) {
+  const queueUrl = notification.priority === "high"
+    ? process.env.HIGH_PRIORITY_QUEUE
+    : process.env.LOW_PRIORITY_QUEUE;
+
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify({
+        id: crypto.randomUUID(),
+        userId: notification.userId,
+        type: notification.type,
+        priority: notification.priority,
+        template: notification.template,
+        data: notification.data,
+        recipient: notification.recipient,
+        timestamp: Date.now()
+      }),
+      MessageGroupId: notification.userId, // FIFO ordering per user
+      MessageDeduplicationId: `${notification.userId}-${Date.now()}` // Prevent duplicates
+    })
+  );
+
+  console.log(`Notification queued: ${notification.type} to ${notification.userId}`);
+}
+
+// Usage in application
+await sendNotification({
+  userId: "user123",
+  type: "email",
+  priority: "high",
+  template: "appointment_reminder",
+  data: {
+    appointmentDate: "2026-01-10",
+    doctorName: "Dr. Smith",
+    appointmentTime: "10:00 AM"
+  },
+  recipient: {
+    email: "patient@example.com"
+  }
+});
+```
+
+### 2. Consumer (Lambda processes queue)
+
+```typescript
+// lambda/notificationWorker.ts
+import { SQSEvent, SQSHandler } from "aws-lambda";
+import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+
+const ses = new SESClient({ region: "us-east-1" });
+const sns = new SNSClient({ region: "us-east-1" });
+const dynamodb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+
+export const handler: SQSHandler = async (event: SQSEvent) => {
+  for (const record of event.Records) {
+    const notification = JSON.parse(record.body);
+
+    try {
+      let deliveryResult;
+
+      switch (notification.type) {
+        case "email":
+          deliveryResult = await sendEmail(notification);
+          break;
+        case "sms":
+          deliveryResult = await sendSMS(notification);
+          break;
+        case "push":
+          deliveryResult = await sendPush(notification);
+          break;
+        default:
+          throw new Error(`Unknown notification type: ${notification.type}`);
+      }
+
+      // Track delivery status in DynamoDB
+      await dynamodb.send(
+        new PutCommand({
+          TableName: process.env.NOTIFICATIONS_TABLE,
+          Item: {
+            id: notification.id,
+            userId: notification.userId,
+            type: notification.type,
+            status: "delivered",
+            deliveryId: deliveryResult.messageId,
+            timestamp: Date.now(),
+            ttl: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 // 30 days
+          }
+        })
+      );
+
+      console.log(`✓ Notification delivered: ${notification.id}`);
+    } catch (error) {
+      console.error(`✗ Notification failed: ${notification.id}`, error);
+
+      // Track failure
+      await dynamodb.send(
+        new PutCommand({
+          TableName: process.env.NOTIFICATIONS_TABLE,
+          Item: {
+            id: notification.id,
+            userId: notification.userId,
+            type: notification.type,
+            status: "failed",
+            error: error.message,
+            timestamp: Date.now()
+          }
+        })
+      );
+
+      // Throw error to move message to DLQ
+      throw error;
+    }
+  }
+};
+
+async function sendEmail(notification: any) {
+  const template = await loadTemplate(notification.template);
+  const html = renderTemplate(template, notification.data);
+
+  const result = await ses.send(
+    new SendEmailCommand({
+      Source: process.env.FROM_EMAIL,
+      Destination: {
+        ToAddresses: [notification.recipient.email]
+      },
+      Message: {
+        Subject: { Data: notification.data.subject || "Notification" },
+        Body: {
+          Html: { Data: html }
+        }
+      }
+    })
+  );
+
+  return { messageId: result.MessageId };
+}
+
+async function sendSMS(notification: any) {
+  const result = await sns.send(
+    new PublishCommand({
+      PhoneNumber: notification.recipient.phone,
+      Message: renderTemplate(notification.template, notification.data)
+    })
+  );
+
+  return { messageId: result.MessageId };
+}
+
+async function sendPush(notification: any) {
+  // Using Firebase Cloud Messaging (FCM)
+  const admin = require("firebase-admin");
+
+  const result = await admin.messaging().send({
+    token: notification.recipient.deviceToken,
+    notification: {
+      title: notification.data.title,
+      body: notification.data.body
+    },
+    data: notification.data
+  });
+
+  return { messageId: result };
+}
+
+function loadTemplate(templateName: string): string {
+  // Load from S3 or database
+  const templates = {
+    appointment_reminder: `
+      <h1>Appointment Reminder</h1>
+      <p>You have an appointment with {{doctorName}} on {{appointmentDate}} at {{appointmentTime}}.</p>
+    `
+  };
+  return templates[templateName] || "";
+}
+
+function renderTemplate(template: string, data: Record<string, any>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => data[key] || "");
+}
+```
+
+### 3. Infrastructure Setup (AWS CDK)
+
+```typescript
+// lib/notification-stack.ts
+import * as cdk from "aws-cdk-lib";
+import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+
+export class NotificationStack extends cdk.Stack {
+  constructor(scope: cdk.App, id: string) {
+    super(scope, id);
+
+    // DynamoDB table for tracking notifications
+    const notificationsTable = new dynamodb.Table(this, "NotificationsTable", {
+      partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "timestamp", type: dynamodb.AttributeType.NUMBER },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "ttl"
+    });
+
+    // Dead Letter Queue
+    const dlq = new sqs.Queue(this, "NotificationDLQ", {
+      retentionPeriod: cdk.Duration.days(14)
+    });
+
+    // High priority queue (real-time)
+    const highPriorityQueue = new sqs.Queue(this, "HighPriorityQueue", {
+      fifo: true,
+      contentBasedDeduplication: true,
+      visibilityTimeout: cdk.Duration.seconds(30),
+      deadLetterQueue: {
+        queue: dlq,
+        maxReceiveCount: 3 // Retry 3 times before moving to DLQ
+      }
+    });
+
+    // Low priority queue (batched)
+    const lowPriorityQueue = new sqs.Queue(this, "LowPriorityQueue", {
+      fifo: true,
+      contentBasedDeduplication: true,
+      visibilityTimeout: cdk.Duration.minutes(5),
+      deadLetterQueue: {
+        queue: dlq,
+        maxReceiveCount: 3
+      }
+    });
+
+    // Lambda worker
+    const worker = new lambda.Function(this, "NotificationWorker", {
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: "index.handler",
+      code: lambda.Code.fromAsset("lambda"),
+      timeout: cdk.Duration.seconds(30),
+      environment: {
+        NOTIFICATIONS_TABLE: notificationsTable.tableName,
+        FROM_EMAIL: "noreply@example.com"
+      }
+    });
+
+    // Grant permissions
+    notificationsTable.grantWriteData(worker);
+
+    // Connect queues to Lambda
+    worker.addEventSource(
+      new SqsEventSource(highPriorityQueue, {
+        batchSize: 1 // Process one at a time for real-time
+      })
+    );
+
+    worker.addEventSource(
+      new SqsEventSource(lowPriorityQueue, {
+        batchSize: 10 // Batch for efficiency
+      })
+    );
+  }
+}
+```
+
+---
+
+## Key Design Decisions
+
+| Decision | Why | Alternative |
+|----------|-----|-------------|
+| **SQS Queue** | Decouples producer/consumer, handles traffic spikes | Direct Lambda invocation (no buffering) |
+| **Lambda** | Auto-scales, pay per use, serverless | EC2/ECS (more operational overhead) |
+| **DLQ (Dead Letter Queue)** | Captures failures for debugging and manual retry | Lose failed messages |
+| **DynamoDB** | Fast lookups, scales automatically | RDS (slower, needs provisioning) |
+| **Priority Queues** | Separate SLA for critical vs non-critical | Single queue (everything same priority) |
+| **FIFO Queues** | Ensures ordering per user | Standard queue (duplicates possible) |
+
+---
+
+## Scaling Strategies
+
+| Volume | Architecture | Notes |
+|--------|--------------|-------|
+| **Low (200/day)** | Single SQS + Lambda | Simple, cost-effective |
+| **Medium (10K/day)** | Add batching, increase Lambda concurrency | Optimize batch sizes |
+| **High (100K+/day)** | Multiple queues by channel, increase Lambda reserved concurrency | Separate email/SMS/push queues |
+| **Very High (1M+/day)** | Kinesis Data Streams for real-time, maintain SQS for batched | Use Kinesis for high-throughput streaming |
+
+**Optimizations:**
+```typescript
+// Batching for low-priority notifications
+const batchNotifications = async (notifications: Notification[]) => {
+  // Group by type
+  const grouped = notifications.reduce((acc, n) => {
+    acc[n.type] = acc[n.type] || [];
+    acc[n.type].push(n);
+    return acc;
+  }, {});
+
+  // Send in batches
+  for (const [type, batch] of Object.entries(grouped)) {
+    if (type === "email") {
+      await ses.sendBulkTemplatedEmail({
+        Source: process.env.FROM_EMAIL,
+        Destinations: batch.map(n => ({
+          Destination: { ToAddresses: [n.recipient.email] },
+          ReplacementTemplateData: JSON.stringify(n.data)
+        })),
+        Template: "notification-template"
+      });
+    }
+  }
+};
+```
+
+---
+
+## Monitoring and Observability
+
+```typescript
+// CloudWatch metrics
+import { CloudWatch } from "@aws-sdk/client-cloudwatch";
+
+const cloudwatch = new CloudWatch({});
+
+async function trackMetrics(notification: any, status: string) {
+  await cloudwatch.putMetricData({
+    Namespace: "Notifications",
+    MetricData: [
+      {
+        MetricName: "NotificationsSent",
+        Value: 1,
+        Unit: "Count",
+        Dimensions: [
+          { Name: "Type", Value: notification.type },
+          { Name: "Status", Value: status },
+          { Name: "Priority", Value: notification.priority }
+        ]
+      }
+    ]
+  });
+}
+
+// CloudWatch alarm for DLQ
+// Alert when messages pile up in DLQ
+const dlqAlarm = new cloudwatch.Alarm(this, "DLQAlarm", {
+  metric: dlq.metricApproximateNumberOfMessagesVisible(),
+  threshold: 10,
+  evaluationPeriods: 1,
+  alarmDescription: "Alert when DLQ has messages"
+});
+```
+
+---
+
+## Real-World Experience
+
+**From DrChrono EHR Integration:**
+
+> "I built this notification system for DrChrono webhook integration. When patient data syncs from the EHR, it triggers appointment reminders via AWS SES. Using SQS decoupling, we handle 200+ daily notifications with automatic retries for failed deliveries. Failed messages go to DLQ where we can debug and manually retry. This reduced manual reminder processes by 75% and improved patient show-up rates by 20%."
+
+**Key Learnings:**
+- FIFO queues prevent duplicate notifications (important for patient communications)
+- DLQ saved us during SES rate limit issues - messages weren't lost
+- Separate high/low priority queues improved critical alert delivery time
+- DynamoDB TTL automatically cleans up old notification records
+
+---
+
+## Testing Strategy
+
+```typescript
+// tests/notification.test.ts
+import { sendNotification } from "../src/services/notificationService";
+import { handler } from "../lambda/notificationWorker";
+
+describe("Notification System", () => {
+  it("should queue notification successfully", async () => {
+    const result = await sendNotification({
+      userId: "test123",
+      type: "email",
+      priority: "high",
+      template: "test",
+      data: { subject: "Test" },
+      recipient: { email: "test@example.com" }
+    });
+
+    expect(result).toBeDefined();
+  });
+
+  it("should process email notification", async () => {
+    const event = {
+      Records: [
+        {
+          body: JSON.stringify({
+            id: "test-id",
+            type: "email",
+            recipient: { email: "test@example.com" },
+            data: { subject: "Test" }
+          })
+        }
+      ]
+    };
+
+    await expect(handler(event as any)).resolves.not.toThrow();
+  });
+
+  it("should move to DLQ after max retries", async () => {
+    // Simulate failure 3 times
+    const failingEvent = {
+      Records: [
+        {
+          body: JSON.stringify({
+            type: "email",
+            recipient: { email: "invalid@" } // Invalid email
+          }),
+          attributes: {
+            ApproximateReceiveCount: "4" // Exceeds max retries
+          }
+        }
+      ]
+    };
+
+    // Should throw and be moved to DLQ
+    await expect(handler(failingEvent as any)).rejects.toThrow();
+  });
+});
+```
+
+---
+
+## Best Practices
+
+- [ ] Use separate queues for different priorities
+- [ ] Implement idempotency (prevent duplicate sends)
+- [ ] Set appropriate visibility timeouts
+- [ ] Configure DLQ for failure handling
+- [ ] Track delivery status in database
+- [ ] Monitor queue depth and processing time
+- [ ] Use batching for non-critical notifications
+- [ ] Implement rate limiting for external APIs
+- [ ] Add retry logic with exponential backoff
+- [ ] Use templates for consistent messaging
+- [ ] Test with production-like volumes
+- [ ] Set up alerts for DLQ messages
+
+---
+
+## Cost Estimation
+
+| Component | Cost (200 notifications/day) | Cost (10K/day) |
+|-----------|------------------------------|----------------|
+| SQS | ~$0.001 | ~$0.05 |
+| Lambda | ~$0.01 | ~$0.50 |
+| SES | ~$0.02 | ~$1.00 |
+| DynamoDB | ~$0.01 | ~$0.25 |
+| **Total** | **~$0.04/day** | **~$1.80/day** |
+
+**Monthly cost:** $1.20 (low volume) to $54 (medium volume)
+
+---
+
+## Analogy:
+
+Think of a notification system like a **postal service**:
+- **SQS Queue** = Mailbox (collects letters)
+- **Lambda Worker** = Mail carrier (delivers to destinations)
+- **Priority Queues** = Express vs regular mail
+- **DLQ** = Return to sender (undeliverable items)
+- **DynamoDB** = Tracking system (delivery confirmation)
+- **Channels** = Delivery methods (truck, plane, drone)
+
+---
+
+### ⚡ One-liner to remember:
+> Producer → Queue (SQS) → Worker (Lambda) → Channels (SES/SNS) → Track (DynamoDB) + DLQ for failures.
+
+---
+
+## Q8. REST vs GraphQL - when to use each?
+
+### Bottom Line (TL;DR):
+
+**Use REST** when you want simplicity, caching, and clear resource boundaries.
+
+**Use GraphQL** when you need flexible data fetching and fewer network calls.
+
+---
+
+## REST — Use When
+
+### Why:
+- Simple mental model (resources + HTTP verbs)
+- Works great with HTTP caching, CDNs
+- Easy to debug, monitor, and scale
+
+### Best For:
+- CRUD-heavy APIs
+- Public APIs
+- Microservices with clear boundaries
+
+### Example:
+
+```typescript
+// REST - Multiple requests needed
+GET /users/1
+GET /users/1/orders
+
+// Response 1
+{
+  "id": 1,
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+
+// Response 2
+{
+  "orders": [
+    { "id": 101, "total": 99.99 },
+    { "id": 102, "total": 149.99 }
+  ]
+}
+```
+
+**Trade-off:** Multiple calls, but responses are predictable and cacheable.
+
+---
+
+## GraphQL — Use When
+
+### Why:
+- Client asks exactly what it needs (no over/under-fetching)
+- Fewer round trips
+- Strongly typed schema
+
+### Best For:
+- Mobile apps (slow networks, battery concerns)
+- Complex UIs (dashboards, feeds)
+- Rapid frontend iteration
+
+### Example:
+
+```graphql
+# GraphQL - One request, tailored response
+query {
+  user(id: 1) {
+    name
+    email
+    orders {
+      id
+      total
+    }
+  }
+}
+
+# Response - Single call
+{
+  "data": {
+    "user": {
+      "name": "John Doe",
+      "email": "john@example.com",
+      "orders": [
+        { "id": 101, "total": 99.99 },
+        { "id": 102, "total": 149.99 }
+      ]
+    }
+  }
+}
+```
+
+**Trade-off:** One request, but requires GraphQL server setup and caching strategy.
+
+---
+
+## Key Differences (Quick Scan)
+
+| Aspect | REST | GraphQL |
+|--------|------|---------|
+| **Data fetching** | Fixed responses | Client-defined |
+| **Network calls** | Often many | Usually one |
+| **Caching** | Native HTTP (CDN-friendly) | Manual (requires library) |
+| **Learning curve** | Low | Medium |
+| **Tooling** | Mature (Postman, curl) | Growing fast (Apollo, Relay) |
+| **Versioning** | `/v1/`, `/v2/` | Schema evolution |
+| **Over-fetching** | Common | Eliminated |
+| **Under-fetching** | Common (N+1) | Eliminated |
+| **File uploads** | Native | Requires extensions |
+| **Real-time** | WebSockets/SSE | Subscriptions built-in |
+
+---
+
+## Practical Rule of Thumb
+
+```
+Backend-driven systems     → REST
+Frontend-driven products   → GraphQL
+
+Public API                 → REST
+Internal product UI        → GraphQL
+
+Simple CRUD                → REST
+Complex data requirements  → GraphQL
+
+Need HTTP caching          → REST
+Need flexible queries      → GraphQL
+```
+
+---
+
+## Code Comparison
+
+### REST Implementation:
+
+```typescript
+// Express REST API
+app.get("/api/users/:id", async (req, res) => {
+  const user = await db.users.findOne({ id: req.params.id });
+  res.json(user);
+});
+
+app.get("/api/users/:id/orders", async (req, res) => {
+  const orders = await db.orders.findMany({ userId: req.params.id });
+  res.json(orders);
+});
+
+// Client - Multiple requests
+const user = await fetch("/api/users/1").then(r => r.json());
+const orders = await fetch("/api/users/1/orders").then(r => r.json());
+```
+
+### GraphQL Implementation:
+
+```typescript
+// GraphQL Schema
+const typeDefs = `
+  type User {
+    id: ID!
+    name: String!
+    email: String!
+    orders: [Order!]!
+  }
+
+  type Order {
+    id: ID!
+    total: Float!
+  }
+
+  type Query {
+    user(id: ID!): User
+  }
+`;
+
+// Resolvers
+const resolvers = {
+  Query: {
+    user: (_, { id }) => db.users.findOne({ id })
+  },
+  User: {
+    orders: (user) => db.orders.findMany({ userId: user.id })
+  }
+};
+
+// Client - Single request
+const { data } = await client.query({
+  query: gql`
+    query GetUser($id: ID!) {
+      user(id: $id) {
+        name
+        email
+        orders {
+          id
+          total
+        }
+      }
+    }
+  `,
+  variables: { id: "1" }
+});
+```
+
+---
+
+## When to Use Both (Hybrid)
+
+Some companies use both:
+
+```
+REST       → Public API, webhooks, simple CRUD
+GraphQL    → Internal dashboard, mobile app
+
+Example: GitHub
+- REST API v3 (public)
+- GraphQL API v4 (flexible queries)
+```
+
+---
+
+## Migration Path
+
+**REST → GraphQL:**
+
+```typescript
+// Step 1: Wrap existing REST endpoints
+const typeDefs = `
+  type User {
+    id: ID!
+    name: String!
+  }
+
+  type Query {
+    user(id: ID!): User
+  }
+`;
+
+const resolvers = {
+  Query: {
+    user: async (_, { id }) => {
+      // Call existing REST endpoint
+      const response = await fetch(`/api/users/${id}`);
+      return response.json();
+    }
+  }
+};
+
+// Step 2: Gradually replace with direct DB calls
+// Step 3: Deprecate REST endpoints
+```
+
+---
+
+## Common Mistakes
+
+| Mistake | Solution |
+|---------|----------|
+| Using GraphQL for simple CRUD | Stick with REST |
+| Not implementing caching in GraphQL | Use DataLoader, Apollo Cache |
+| Over-nesting GraphQL queries | Limit query depth |
+| Exposing REST endpoints without pagination | Always paginate |
+| No rate limiting on GraphQL | Implement query cost analysis |
+
+---
+
+## Real-World Examples
+
+**REST Wins:**
+- Stripe API (payments)
+- Twilio API (SMS)
+- AWS S3 API (file storage)
+
+**GraphQL Wins:**
+- GitHub v4 API (complex queries)
+- Shopify Storefront API (flexible product data)
+- Airbnb (mobile app performance)
+
+**Hybrid:**
+- Netflix (REST for CDN, GraphQL for UI)
+- Facebook (REST for legacy, GraphQL for new features)
+
+---
+
+## Performance Comparison
+
+| Scenario | REST | GraphQL |
+|----------|------|---------|
+| **Fetch user + orders** | 2 requests (100ms each) = 200ms | 1 request (120ms) = 120ms |
+| **Mobile on 3G** | Multiple round trips = slow | Single request = faster |
+| **CDN caching** | Native support | Requires custom setup |
+| **Over-fetching** | Returns all fields | Returns only requested |
+
+---
+
+## Analogy:
+
+**REST** = **Restaurant menu**
+- Fixed dishes (endpoints)
+- Order item by item (separate calls)
+- Clear prices (predictable responses)
+- Easy for everyone to understand
+
+**GraphQL** = **Build-your-own-bowl**
+- Pick exactly what you want (custom queries)
+- One order, custom ingredients (single request)
+- Requires understanding the menu (learning curve)
+- Perfect for picky eaters (flexible clients)
+
+---
+
+### ⚡ One-liner to remember:
+> REST = Simple, cacheable, predictable. GraphQL = Flexible, efficient, tailored.
+
+---
+
+## Q9. Why is API versioning needed and what are its advantages?
+
+### Bottom Line:
+
+**API versioning lets you change an API without breaking existing clients.**
+
+---
+
+## Why API Versioning is Needed
+
+As APIs evolve, you will:
+- Add new fields
+- Change response structure
+- Deprecate or remove features
+- Fix design mistakes
+
+**Without versioning → client apps break unexpectedly.**
+
+---
+
+## Common Versioning Approaches
+
+### 1. URL Versioning (Most Common)
+
+```
+GET /api/v1/users
+GET /api/v2/users
+```
+
+**Use when:** Public or long-lived APIs
+**Pros:** Clear, explicit, easy to manage
+**Cons:** URL duplication
+
+**Example:**
+```typescript
+// v1: Returns basic user data
+app.get("/api/v1/users/:id", (req, res) => {
+  const user = db.users.findOne({ id: req.params.id });
+  res.json({ id: user.id, name: user.name });
+});
+
+// v2: Returns additional data
+app.get("/api/v2/users/:id", (req, res) => {
+  const user = db.users.findOne({ id: req.params.id });
+  res.json({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    profile: user.profile
+  });
+});
+```
+
+### 2. Header Versioning
+
+```
+Accept: application/vnd.myapi.v2+json
+API-Version: 2
+```
+
+**Use when:** You want clean URLs
+**Pros:** REST-pure, flexible
+**Cons:** Harder to debug, less visible
+
+**Example:**
+```typescript
+app.get("/api/users/:id", (req, res) => {
+  const version = req.headers["api-version"] || "1";
+  const user = db.users.findOne({ id: req.params.id });
+
+  if (version === "1") {
+    res.json({ id: user.id, name: user.name });
+  } else if (version === "2") {
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      profile: user.profile
+    });
+  }
+});
+```
+
+### 3. Query Parameter Versioning
+
+```
+GET /api/users?version=2
+```
+
+**Use when:** Internal or temporary APIs
+**Pros:** Simple, no route changes
+**Cons:** Easy to misuse, less strict
+
+---
+
+## Advantages of API Versioning
+
+| Advantage | Description |
+|-----------|-------------|
+| **Backward compatibility** | Old clients keep working while new clients upgrade |
+| **Safe evolution** | Refactor or redesign without fear |
+| **Clear deprecation** | Gradually sunset old versions instead of sudden breaks |
+| **Parallel development** | Multiple teams can move at different speeds |
+| **Consumer trust** | Clients know changes won't surprise them |
+
+---
+
+## Versioning Strategy
+
+### Breaking Changes (Version Required):
+
+```typescript
+// v1: Returns array
+GET /api/v1/users
+{ "users": [...] }
+
+// v2: Returns object with metadata (BREAKING)
+GET /api/v2/users
+{
+  "data": [...],
+  "pagination": { "page": 1, "total": 100 }
+}
+```
+
+### Non-Breaking Changes (No Version Needed):
+
+```typescript
+// v1: Original
+GET /api/v1/users
+{ "id": 1, "name": "John" }
+
+// v1: Add optional field (NOT BREAKING)
+GET /api/v1/users
+{ "id": 1, "name": "John", "avatar": "url" }  // New field, backward compatible
+```
+
+---
+
+## Best Practices
+
+- [ ] Version only when breaking changes occur
+- [ ] Keep versions few (max 2-3 active)
+- [ ] Document each version thoroughly
+- [ ] Announce deprecations early (6-12 months notice)
+- [ ] Avoid versioning for small, backward-compatible changes
+- [ ] Set sunset dates for old versions
+- [ ] Monitor usage of deprecated versions
+- [ ] Provide migration guides
+
+---
+
+## Deprecation Strategy
+
+```typescript
+// Step 1: Announce deprecation
+app.get("/api/v1/users", (req, res) => {
+  res.setHeader("X-API-Deprecated", "true");
+  res.setHeader("X-API-Sunset-Date", "2026-12-31");
+  res.setHeader("X-API-Migration-Guide", "https://docs.example.com/migrate-v2");
+
+  // Still return v1 response
+  const users = db.users.findAll();
+  res.json(users);
+});
+
+// Step 2: After sunset date, return error
+app.get("/api/v1/users", (req, res) => {
+  res.status(410).json({
+    error: "API version v1 has been sunset",
+    message: "Please upgrade to v2",
+    migrationGuide: "https://docs.example.com/migrate-v2"
+  });
+});
+```
+
+---
+
+## Real-World Example
+
+**Twitter API Evolution:**
+
+```
+v1.1 (2012-2018)
+GET /1.1/statuses/user_timeline.json
+
+v2 (2020+)
+GET /2/users/:id/tweets
+```
+
+**Changes:**
+- New data model
+- More granular permissions
+- Better pagination
+- Standardized error responses
+
+**Strategy:**
+- Ran both versions simultaneously for 2 years
+- Provided migration tools
+- Deprecated v1.1 gradually
+
+---
+
+## Comparison Table
+
+| Approach | URL Clarity | Debugging | Caching | Adoption |
+|----------|-------------|-----------|---------|----------|
+| URL versioning | ✅ Excellent | ✅ Easy | ✅ Simple | 🟢 High |
+| Header versioning | ⚠️ Hidden | ❌ Hard | ⚠️ Complex | 🟡 Medium |
+| Query parameter | ⚠️ Unclear | ⚠️ Medium | ❌ Tricky | 🔴 Low |
+
+---
+
+## Rule of Thumb
+
+```
+If a change can break a client     → Version it
+If it only adds optional data      → Don't version
+
+Examples:
+- Rename field          → Version (breaking)
+- Remove field          → Version (breaking)
+- Change data type      → Version (breaking)
+- Add optional field    → No version (compatible)
+- Add new endpoint      → No version (compatible)
+```
+
+---
+
+## Analogy:
+
+Think of API versioning like **software releases**:
+- **v1** = First stable version (Windows 10)
+- **v2** = Major update with new features (Windows 11)
+- **Both run simultaneously** = Users upgrade when ready
+- **Deprecation** = End of support for old version
+- **Migration guide** = Upgrade documentation
+
+---
+
+### ⚡ One-liner to remember:
+> Version APIs to evolve safely — breaking changes get new versions, additions don't.
+
+---
+
+## Q10. What is idempotency and why is it critical for APIs?
+
+### Definition:
+
+**An operation is idempotent if repeating it multiple times gives the same result as doing it once.**
+
+---
+
+## Simple Analogy
+
+**Light switch:**
+- Switch ON once → light is ON
+- Switch ON again → light is still ON
+- **No extra effect after the first action → idempotent**
+
+---
+
+## HTTP Method Examples
+
+### Idempotent Methods:
+
+```typescript
+// GET - Always returns same data
+GET /users/1
+GET /users/1  // Same result
+
+// PUT - Replaces resource (same result every time)
+PUT /users/1
+{
+  "name": "Shyam"
+}
+// Send 1 time or 10 times → user name remains "Shyam"
+
+// DELETE - Deletes resource
+DELETE /users/1
+DELETE /users/1  // Already deleted, same state
+
+// PATCH - Can be designed to be idempotent
+PATCH /users/1
+{
+  "name": "Shyam"  // Setting absolute value (idempotent)
+}
+```
+
+### Non-Idempotent Method:
+
+```typescript
+// POST - Creates new resource each time
+POST /payments
+{
+  "amount": 100
+}
+// Send it twice → ₹200 charged ❌ DANGEROUS
+```
+
+---
+
+## Why Idempotency Matters
+
+| Scenario | Without Idempotency | With Idempotency |
+|----------|---------------------|------------------|
+| **Network retry** | Duplicate payment | Safe retry |
+| **Mobile app resend** | Double order | Same order |
+| **Gateway timeout** | Uncertain state | Predictable result |
+| **User double-click** | Multiple charges | Single charge |
+
+**Critical for:**
+- Payment APIs
+- Order creation
+- Inventory updates
+- Financial transactions
+
+---
+
+## Real-World Problem
+
+```typescript
+// User submits payment
+POST /payments { amount: 1000 }
+
+// Network timeout (but server processed it)
+// User clicks "Retry"
+POST /payments { amount: 1000 }
+
+// Result: ₹2000 charged 😱
+```
+
+---
+
+## HTTP Methods Summary
+
+| Method | Idempotent? | Why |
+|--------|-------------|-----|
+| **GET** | ✅ Yes | Only reads, no side effects |
+| **PUT** | ✅ Yes | Replaces entire resource with same data |
+| **DELETE** | ✅ Yes | Deleting twice has same effect |
+| **PATCH** | ⚠️ Maybe | Depends on implementation |
+| **POST** | ❌ No | Creates new resource each time |
+
+---
+
+## PATCH: Idempotent vs Non-Idempotent
+
+**Non-Idempotent PATCH:**
+```typescript
+// Increments balance
+PATCH /accounts/1
+{
+  "operation": "increment",
+  "balance": 100
+}
+// Called twice → balance += 200 ❌
+```
+
+**Idempotent PATCH:**
+```typescript
+// Sets absolute value
+PATCH /accounts/1
+{
+  "balance": 500
+}
+// Called twice → balance = 500 ✅
+```
+
+---
+
+## Best Practices
+
+- [ ] Use GET for safe, read-only operations
+- [ ] Use PUT for full resource replacement
+- [ ] Use DELETE for removals
+- [ ] **Avoid POST for critical operations** (use idempotency keys instead)
+- [ ] Design PATCH to be idempotent when possible
+- [ ] Always implement idempotency for financial operations
+
+---
+
+## Analogy:
+
+**Idempotent** = **Turning off a light that's already off**
+- First time: Light goes OFF
+- Second time: Light stays OFF (no change)
+- Safe to repeat
+
+**Non-Idempotent** = **Putting money in a piggy bank**
+- First time: Add $10
+- Second time: Add another $10
+- Total: $20 (different result)
+
+---
+
+### ⚡ One-liner to remember:
+> Idempotent = Safe to retry. Critical for payments, retries, and reliability.
+
+---
+
+## Q11. How do you design an idempotent payment API?
+
+### Bottom Line:
+
+**Use an Idempotency Key to ensure retries don't duplicate payments.**
+
+---
+
+## The Problem
+
+```typescript
+// Payment request times out
+POST /payments { amount: 100 }
+// Timeout... but payment processed?
+
+// User retries
+POST /payments { amount: 100 }
+// Result: ₹200 charged 😱
+```
+
+---
+
+## Solution: Idempotency Key
+
+### Step 1: Client sends unique key
+
+```typescript
+POST /payments
+Idempotency-Key: abc-123-uuid
+Content-Type: application/json
+
+{
+  "amount": 100,
+  "currency": "INR",
+  "userId": "user123"
+}
+```
+
+### Step 2: Server checks the key
+
+```typescript
+app.post("/payments", async (req, res) => {
+  const idempotencyKey = req.headers["idempotency-key"];
+
+  // Check if we've seen this key before
+  const existing = await db.idempotencyKeys.findOne({
+    key: idempotencyKey,
+    userId: req.body.userId
+  });
+
+  if (existing) {
+    // Already processed → return stored response
+    return res.status(existing.statusCode).json(existing.response);
+  }
+
+  // New request → process payment
+  // ...
+});
+```
+
+### Step 3: Process & store result
+
+```typescript
+app.post("/payments", async (req, res) => {
+  const idempotencyKey = req.headers["idempotency-key"];
+
+  // Check existing (as above)
+  const existing = await checkExisting(idempotencyKey, req.body.userId);
+  if (existing) return res.status(existing.statusCode).json(existing.response);
+
+  // Lock to prevent race conditions
+  const lock = await acquireLock(idempotencyKey);
+
+  try {
+    // Process payment
+    const payment = await processPayment(req.body);
+
+    // Store result
+    await db.idempotencyKeys.create({
+      key: idempotencyKey,
+      userId: req.body.userId,
+      requestHash: hashRequest(req.body),
+      response: {
+        paymentId: payment.id,
+        status: "SUCCESS",
+        amount: payment.amount
+      },
+      statusCode: 201,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+    });
+
+    return res.status(201).json({
+      paymentId: payment.id,
+      status: "SUCCESS",
+      amount: payment.amount
+    });
+  } finally {
+    await releaseLock(lock);
+  }
+});
+```
+
+### Step 4: Return same response on retry
+
+```typescript
+// First request
+POST /payments
+Idempotency-Key: abc-123
+
+Response: 201 Created
+{
+  "paymentId": "pay_001",
+  "status": "SUCCESS",
+  "amount": 100
+}
+
+// Retry (same key)
+POST /payments
+Idempotency-Key: abc-123
+
+Response: 201 Created (from cache)
+{
+  "paymentId": "pay_001",
+  "status": "SUCCESS",
+  "amount": 100
+}
+// ✅ No duplicate charge!
+```
+
+---
+
+## Complete Implementation
+
+```typescript
+import { v4 as uuidv4 } from "uuid";
+import crypto from "crypto";
+
+// Database schema
+interface IdempotencyRecord {
+  key: string;
+  userId: string;
+  requestHash: string;
+  response: any;
+  statusCode: number;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+// Middleware to enforce idempotency key
+function requireIdempotencyKey(req, res, next) {
+  if (!req.headers["idempotency-key"]) {
+    return res.status(400).json({
+      error: "Idempotency-Key header is required"
+    });
+  }
+  next();
+}
+
+// Hash request body for validation
+function hashRequest(body: any): string {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(body))
+    .digest("hex");
+}
+
+// Payment endpoint
+app.post(
+  "/payments",
+  requireIdempotencyKey,
+  async (req, res) => {
+    const idempotencyKey = req.headers["idempotency-key"];
+    const userId = req.body.userId;
+
+    // Check if already processed
+    const existing = await db.idempotencyKeys.findOne({
+      key: idempotencyKey,
+      userId: userId
+    });
+
+    if (existing) {
+      // Validate request hasn't changed
+      const currentHash = hashRequest(req.body);
+      if (currentHash !== existing.requestHash) {
+        return res.status(422).json({
+          error: "Request body has changed for this idempotency key"
+        });
+      }
+
+      // Return cached response
+      console.log("Returning cached response for:", idempotencyKey);
+      return res.status(existing.statusCode).json(existing.response);
+    }
+
+    // Acquire distributed lock (Redis)
+    const lockKey = `payment-lock:${idempotencyKey}`;
+    const locked = await redis.set(lockKey, "1", "EX", 30, "NX");
+
+    if (!locked) {
+      return res.status(409).json({
+        error: "Payment is being processed, please retry"
+      });
+    }
+
+    try {
+      // Process payment
+      const payment = await stripe.charges.create({
+        amount: req.body.amount,
+        currency: req.body.currency,
+        source: req.body.source,
+        metadata: { userId: req.body.userId }
+      });
+
+      const response = {
+        paymentId: payment.id,
+        status: payment.status,
+        amount: payment.amount,
+        currency: payment.currency
+      };
+
+      // Store result with TTL
+      await db.idempotencyKeys.create({
+        key: idempotencyKey,
+        userId: userId,
+        requestHash: hashRequest(req.body),
+        response: response,
+        statusCode: 201,
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+      });
+
+      return res.status(201).json(response);
+    } catch (error) {
+      // Store failure too
+      await db.idempotencyKeys.create({
+        key: idempotencyKey,
+        userId: userId,
+        requestHash: hashRequest(req.body),
+        response: { error: error.message },
+        statusCode: 500,
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+      });
+
+      return res.status(500).json({ error: error.message });
+    } finally {
+      // Release lock
+      await redis.del(lockKey);
+    }
+  }
+);
+
+// Client usage
+const idempotencyKey = uuidv4(); // Generate once per payment attempt
+
+async function makePayment() {
+  try {
+    const response = await fetch("/payments", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey // Same key for retries
+      },
+      body: JSON.stringify({
+        amount: 10000,
+        currency: "INR",
+        userId: "user123",
+        source: "tok_visa"
+      })
+    });
+
+    return await response.json();
+  } catch (error) {
+    // Safe to retry with same key
+    console.log("Retrying with same idempotency key...");
+    return makePayment(); // Uses same idempotencyKey
+  }
+}
+```
+
+---
+
+## Flow Diagram
+
+```
+Client                    Server                     Database
+  │                         │                            │
+  ├─── POST + Key ─────────▶│                            │
+  │                         ├─── Check key ────────────▶│
+  │                         │◀─── Not found ─────────────┤
+  │                         │                            │
+  │                         ├─── Acquire lock ─────────▶│
+  │                         │◀─── Lock acquired ─────────┤
+  │                         │                            │
+  │                         ├─── Process payment         │
+  │                         │                            │
+  │                         ├─── Store result ─────────▶│
+  │                         │◀─── Stored ────────────────┤
+  │                         │                            │
+  │◀─── Response ───────────┤                            │
+  │                         │                            │
+  ├─── RETRY (same key) ───▶│                            │
+  │                         ├─── Check key ────────────▶│
+  │                         │◀─── Found ─────────────────┤
+  │◀─── Cached response ────┤                            │
+```
+
+---
+
+## Best Practices
+
+- [ ] **Key should be UUID** - Unique per payment attempt
+- [ ] **Key scoped per user** - Different users can use same key
+- [ ] **Expire keys after 24 hours** - Clean up old records
+- [ ] **Lock during processing** - Prevent race conditions
+- [ ] **Store request hash** - Validate request hasn't changed
+- [ ] **Store both success and failure** - Cache all outcomes
+- [ ] **Client generates key** - Server shouldn't create it
+- [ ] **Use distributed lock** - For multi-server setups
+
+---
+
+## Real-World Examples
+
+**Stripe:**
+```bash
+curl https://api.stripe.com/v1/charges \
+  -H "Idempotency-Key: {YOUR_KEY}" \
+  -u sk_test_xxx: \
+  -d amount=1000
+```
+
+**PayPal:**
+```bash
+curl -X POST https://api.paypal.com/v2/checkout/orders \
+  -H "PayPal-Request-Id: {YOUR_KEY}"
+```
+
+**Industry standard** for payment APIs.
+
+---
+
+## Common Mistakes
+
+| Mistake | Solution |
+|---------|----------|
+| Server generates key | Client must generate |
+| No expiration | Set 24-48 hour TTL |
+| No locking | Use Redis locks for race conditions |
+| Key not validated | Check request hash matches |
+| Only storing success | Store failures too |
+
+---
+
+## Analogy:
+
+**Idempotency Key** = **Ticket stub at a concert**
+- First entry: Stub checked, you enter
+- Try to enter again: Stub already used, denied
+- Same stub = same result (no duplicate entry)
+
+---
+
+### ⚡ One-liner to remember:
+> Idempotency keys make retries safe — non-negotiable for payments.
 
 ---
