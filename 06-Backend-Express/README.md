@@ -54,6 +54,8 @@
 
 ## 💻 Common Interview Questions
 
+> **[View Detailed Questions & Answers](./questions-and-answers.md)**
+
 ### Conceptual Questions
 1. **Explain the middleware stack in Express.js**
 2. **What's the difference between app.use() and app.get()?**
