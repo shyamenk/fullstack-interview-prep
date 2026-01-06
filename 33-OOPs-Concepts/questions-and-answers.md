@@ -932,3 +932,697 @@ Think of an **onion**:
 > Clean Architecture = Business logic at the center, frameworks at the edges, dependencies point inward.
 
 ---
+
+# Advanced OOP & Design Patterns
+
+## Q15. What is the difference between Composition and Inheritance?
+
+### Concept:
+
+- **Inheritance ("Is-a"):** A child class inherits behavior from a parent class. It creates a tight coupling.
+- **Composition ("Has-a"):** A class is composed of other objects to achieve functionality. It promotes flexibility and loose coupling.
+
+### Example:
+
+```typescript
+// Inheritance (Rigid)
+class Engine {}
+class Car extends Engine {} // A Car IS AN Engine? No, bad modeling.
+
+// Composition (Flexible)
+class Engine {
+  start() { console.log("Engine started"); }
+}
+
+class Car {
+  private engine: Engine;
+
+  constructor(engine: Engine) {
+    this.engine = engine; // A Car HAS AN Engine
+  }
+
+  start() {
+    this.engine.start();
+  }
+}
+```
+
+### Analogy:
+
+- **Inheritance:** Being born with your father's blue eyes (you can't change them easily).
+- **Composition:** Assembling a PC. You can swap the GPU (component) anytime without buying a whole new PC.
+
+### ⚡ One-liner to remember:
+> Favor Composition over Inheritance for flexible code that is easier to change.
+
+---
+
+## Q16. What is the difference between an Abstract Class and an Interface?
+
+### Concept:
+
+- **Abstract Class:** Can have both implemented methods (default behavior) and abstract methods. Supports constructors and state (fields). Used for "Is-a" relationships.
+- **Interface:** Defines a contract (only method signatures, usually). No implementation (in traditional OOP). No state. Used for "Can-do" capabilities.
+
+### Example:
+
+```typescript
+// Abstract Class: Shared code + contract
+abstract class Animal {
+  constructor(public name: string) {} // State
+  eat() { console.log("Munch munch"); } // Shared implementation
+  abstract makeSound(): void; // Contract
+}
+
+// Interface: Pure contract
+interface Flyable {
+  fly(): void;
+}
+
+class Duck extends Animal implements Flyable {
+  makeSound() { console.log("Quack"); }
+  fly() { console.log("Flap flap"); }
+}
+```
+
+### Analogy:
+
+- **Abstract Class:** A generic blueprint for a house (has walls/roof built-in, but you pick the paint).
+- **Interface:** A "Certified Electrician" badge. It doesn't tell you *how* to do the job, just that you *can* do it.
+
+### ⚡ One-liner to remember:
+> Abstract Class = Partial implementation (Is-a); Interface = Contract of behavior (Can-do).
+
+---
+
+## Q17. What is Dependency Injection (DI)?
+
+### Concept:
+
+A technique where an object receives its dependencies from an external source rather than creating them itself. It implements the Dependency Inversion Principle (DIP).
+
+### Example:
+
+```typescript
+class Service {}
+
+// Without DI (Tight coupling)
+class Client {
+  private service: Service;
+  constructor() {
+    this.service = new Service(); // Hard dependency
+  }
+}
+
+// With DI (Loose coupling)
+class ClientDI {
+  private service: Service;
+  constructor(service: Service) { // Injected via constructor
+    this.service = service;
+  }
+}
+```
+
+### Analogy:
+
+- **Without DI:** You want a coffee, so you build a coffee machine from scratch on your kitchen counter.
+- **With DI:** You want a coffee, and someone just hands you a cup (or a machine). You don't care where it came from.
+
+### ⚡ One-liner to remember:
+> DI = Don't call us (create dependencies), we'll call you (inject them).
+
+---
+
+## Q18. What is the difference between Association, Aggregation, and Composition?
+
+### Concept:
+
+They describe relationships between objects with increasing strength:
+1.  **Association:** Loose link. "I use this." (Teacher uses Student).
+2.  **Aggregation:** "Has-a" relationship, but independent lifecycles. (Classroom has Students; students survive if room is destroyed).
+3.  **Composition:** Strong "Has-a". Dependent lifecycle. (House has Rooms; rooms die if house is destroyed).
+
+### Example:
+
+```typescript
+// Composition (Strong)
+class House {
+  private room = new Room(); // Room dies with House
+}
+
+// Aggregation (Weak)
+class Team {
+  private players: Player[];
+  constructor(players: Player[]) {
+    this.players = players; // Players exist outside Team
+  }
+}
+```
+
+### Analogy:
+
+- **Association:** You and a taxi driver (temporary interaction).
+- **Aggregation:** A library and its books (books can exist without *this* specific library).
+- **Composition:** A human and their heart (heart cannot exist without the human).
+
+### ⚡ One-liner to remember:
+> Association = Uses; Aggregation = Has (Independent); Composition = Owns (Dependent).
+
+---
+
+## Q19. What is Cohesion vs. Coupling?
+
+### Concept:
+
+- **Cohesion:** How closely related the responsibilities of a single class/module are. **High Cohesion is Good.**
+- **Coupling:** How dependent classes/modules are on each other. **Low Coupling is Good.**
+
+### Example:
+
+- **High Cohesion:** A `UserAuth` class that only handles login, logout, and password reset.
+- **Low Coupling:** Changing the database implementation doesn't break the UI code.
+
+### Analogy:
+
+- **Cohesion:** A Swiss Army Knife has *low* cohesion (knife, saw, toothpick all in one). A Scalpel has *high* cohesion (does one thing perfectly).
+- **Coupling:** If two people are handcuffed together, they are tightly coupled (one moves, the other must). If they just hold hands, they are loosely coupled.
+
+### ⚡ One-liner to remember:
+> Aim for High Cohesion (focused internal logic) and Low Coupling (independent external connections).
+
+---
+
+## Q20. What is Constructor Chaining?
+
+### Concept:
+
+Calling one constructor from another within the same class (using `this()`) or calling a parent constructor from a child class (using `super()`) to reuse initialization logic.
+
+### Example:
+
+```typescript
+class Product {
+  constructor(public name: string, public price: number) {}
+}
+
+class DigitalProduct extends Product {
+  constructor(name: string, price: number, public downloadLink: string) {
+    super(name, price); // Chain to parent constructor
+    // Additional initialization
+  }
+}
+```
+
+### Analogy:
+
+A relay race. The first runner (Parent Constructor) does their lap, then passes the baton to the next runner (Child Constructor) to finish the job.
+
+### ⚡ One-liner to remember:
+> Reuse initialization logic by passing the baton up the inheritance chain.
+
+---
+
+## Q21. What is a Mixin?
+
+### Concept:
+
+A way to add reusable functionality to a class without using inheritance. It allows a class to "mix in" methods from multiple sources, bypassing single-inheritance limits.
+
+### Example:
+
+```typescript
+// Mixin function
+function Jumpable<T extends Constructor>(Base: T) {
+  return class extends Base {
+    jump() { console.log("Jump!"); }
+  };
+}
+
+class Character {}
+const Mario = Jumpable(Character); // Mario now has jump()
+
+const player = new Mario();
+player.jump(); // "Jump!"
+```
+
+### Analogy:
+
+Ice cream toppings. You have a base scope (Vanilla), and you mix in flavor chunks (Cookie Dough, Sprinkles) to add distinct traits without changing the base entirely.
+
+### ⚡ One-liner to remember:
+> Mixins = Borrowing abilities from multiple sources without inheriting from them.
+
+---
+
+## Q22. What is the Builder Pattern?
+
+### Concept:
+
+Separates the construction of a complex object from its representation. It allows you to create an object step-by-step.
+
+### Example:
+
+```typescript
+class Burger {
+  cheese: boolean = false;
+  bacon: boolean = false;
+
+  addCheese() { this.cheese = true; return this; } // Chainable
+  addBacon() { this.bacon = true; return this; }
+}
+
+// Usage
+const myLunch = new Burger()
+  .addCheese()
+  .addBacon();
+```
+
+### Analogy:
+
+Subway sandwich line. You don't just grab a "Sandwich". You say "Start with bread", "Add turkey", "Add lettuce", "Add mayo". You build it step-by-step.
+
+### ⚡ One-liner to remember:
+> Builder = Construct complex objects step-by-step comfortably.
+
+---
+
+## Q23. What is the Prototype Pattern?
+
+### Concept:
+
+Creates new objects by cloning an existing object (prototype) rather than creating new instances from scratch. Efficient when object creation is expensive.
+
+### Example:
+
+```typescript
+interface Prototype {
+  clone(): Prototype;
+}
+
+class Zombie implements Prototype {
+  constructor(public health: number) {}
+
+  clone(): Zombie {
+    return new Zombie(this.health); // Copy state
+  }
+}
+
+const original = new Zombie(100);
+const clone = original.clone();
+```
+
+### Analogy:
+
+Bacterial reproduction (Mitosis). A bacterium divides to create an identical copy of itself. It doesn't build a new one from raw atoms; it just duplicates.
+
+### ⚡ One-liner to remember:
+> Prototype = Copy-paste an existing object instead of building from scratch.
+
+---
+
+## Q24. What is the Decorator Pattern?
+
+### Concept:
+
+Dynamically adds behavior to an object without affecting the behavior of other objects from the same class. Wraps the original object.
+
+### Example:
+
+```typescript
+interface Coffee {
+  cost(): number;
+}
+
+class SimpleCoffee implements Coffee {
+  cost() { return 10; }
+}
+
+class MilkDecorator implements Coffee {
+  constructor(private coffee: Coffee) {}
+  cost() { return this.coffee.cost() + 2; }
+}
+
+let myCoffee = new SimpleCoffee(); // $10
+myCoffee = new MilkDecorator(myCoffee); // $12
+```
+
+### Analogy:
+
+Putting on layers of clothes. You are the base object. Putting on a jacket "decorates" you with warmth. Putting on a raincoat "decorates" you with water resistance. You are still you inside.
+
+### ⚡ One-liner to remember:
+> Decorator = Wrap an object to add features dynamically (Russian nesting dolls).
+
+---
+
+## Q25. What is the Adapter Pattern?
+
+### Concept:
+
+Allows objects with incompatible interfaces to collaborate. It acts as a bridge between two incompatible interfaces.
+
+### Example:
+
+```typescript
+class OldSystem {
+  specificRequest() { return "Old Data"; }
+}
+
+interface NewInterface {
+  request(): string;
+}
+
+class Adapter implements NewInterface {
+  constructor(private oldSystem: OldSystem) {}
+
+  request() {
+    return this.oldSystem.specificRequest(); // Translate call
+  }
+}
+```
+
+### Analogy:
+
+A travel power adapter. Your US plug (Client) doesn't fit the UK socket (Service). The adapter sits in the middle and translates the connection.
+
+### ⚡ One-liner to remember:
+> Adapter = Makes a square peg fit in a round hole.
+
+---
+
+## Q26. What is the Facade Pattern?
+
+### Concept:
+
+Provides a simplified interface to a library, a framework, or any other complex set of classes. Hides complexity behind a single "face".
+
+### Example:
+
+```typescript
+class ComputerFacade {
+  start() {
+    // Complex subsystem details hidden
+    this.cpu.freeze();
+    this.memory.load();
+    this.hardDrive.read();
+    this.cpu.jump();
+  }
+}
+
+const pc = new ComputerFacade();
+pc.start(); // One simple call
+```
+
+### Analogy:
+
+A car dashboard. You press one button to start the car. Behind the scenes, the starter motor, fuel injection, and spark plugs do complex work, but you just see the button.
+
+### ⚡ One-liner to remember:
+> Facade = Simple front door to a complex building.
+
+---
+
+## Q27. What is the Proxy Pattern?
+
+### Concept:
+
+A placeholder for another object to control access to it. Can be used for lazy loading, access control, or logging.
+
+### Example:
+
+```typescript
+interface Image {
+  display(): void;
+}
+
+class RealImage implements Image {
+  loadFromDisk() { /* expensive */ }
+  display() { console.log("Showing image"); }
+}
+
+class ProxyImage implements Image {
+  private realImage: RealImage;
+
+  display() {
+    if (!this.realImage) {
+      this.realImage = new RealImage(); // Lazy load
+      this.realImage.loadFromDisk();
+    }
+    this.realImage.display();
+  }
+}
+```
+
+### Analogy:
+
+A credit card. It is a proxy for the cash in your bank account. You use the card instead of carrying bundles of cash, and the bank (proxy handler) checks funds before approving.
+
+### ⚡ One-liner to remember:
+> Proxy = A substitute that controls access to the real object.
+
+---
+
+## Q28. What is the Command Pattern?
+
+### Concept:
+
+Encapsulates a request as an object, thereby allowing for parameterization of clients with different requests, and the queuing or logging of requests.
+
+### Example:
+
+```typescript
+interface Command {
+  execute(): void;
+}
+
+class Light {
+  on() { console.log("Light On"); }
+}
+
+class LightOnCommand implements Command {
+  constructor(private light: Light) {}
+  execute() { this.light.on(); }
+}
+
+// Remote Control (Invoker) doesn't know details, just executes commands
+class Remote {
+  submit(command: Command) { command.execute(); }
+}
+```
+
+### Analogy:
+
+Ordering at a restaurant. You (Client) give an order (Command) to the waiter (Invoker). The waiter hands it to the chef (Receiver). You don't tell the chef how to cook; the order ticket encapsulates your request.
+
+### ⚡ One-liner to remember:
+> Command = Turn a method call into an object so you can pass it around.
+
+---
+
+## Q29. What is the Template Method Pattern?
+
+### Concept:
+
+Defines the skeleton of an algorithm in the superclass but lets subclasses override specific steps of the algorithm without changing its structure.
+
+### Example:
+
+```typescript
+abstract class DataMiner {
+  // Template method - final/sealed logic
+  mine(): void {
+    this.openFile();
+    this.extractData(); // Abstract step
+    this.closeFile();
+  }
+
+  abstract extractData(): void;
+  openFile() { console.log("Opening..."); }
+  closeFile() { console.log("Closing..."); }
+}
+
+class PDFMiner extends DataMiner {
+  extractData() { console.log("Extracting PDF..."); }
+}
+```
+
+### Analogy:
+
+Building a house. The general steps (Template) are: Foundation -> Frame -> Walls -> Roof. Every house follows this, but "Walls" can be brick or wood (Subclass implementation).
+
+### ⚡ One-liner to remember:
+> Template Method = Standard operating procedure with customizable steps.
+
+---
+
+## Q30. What is the Null Object Pattern?
+
+### Concept:
+
+Instead of returning `null` (which causes NullPointerExceptions), return an object that implements the interface but does "nothing".
+
+### Example:
+
+```typescript
+interface Logger {
+  log(msg: string): void;
+}
+
+class ConsoleLogger implements Logger {
+  log(msg: string) { console.log(msg); }
+}
+
+class NullLogger implements Logger {
+  log(msg: string) { /* Do nothing safely */ }
+}
+
+// Usage
+let logger: Logger = getLogger() || new NullLogger();
+logger.log("Hello"); // Never crashes, even if "null" logic applies
+```
+
+### Analogy:
+
+A "Do Not Disturb" sign. If you knock, nothing happens. It's better than knocking on a door that doesn't exist and falling into a void.
+
+### ⚡ One-liner to remember:
+> Null Object = A valid object that does nothing, replacing dangerous nulls.
+
+---
+
+## Q31. What is the Law of Demeter (Principle of Least Knowledge)?
+
+### Concept:
+
+A module should not know about the innards of the objects it manipulates. "Talk only to your immediate friends." Avoid chaining calls like `a.getB().getC().doSomething()`.
+
+### Example:
+
+```typescript
+// Bad (Train Wreck)
+class Store {
+  getCustomerWallet() { return this.wallet; }
+}
+store.getCustomer().getWallet().deduct(5);
+
+// Good
+class Store {
+  chargeCustomer(amount: number) {
+    this.customer.pay(amount); // Store talks to Customer, not Wallet
+  }
+}
+store.chargeCustomer(5);
+```
+
+### Analogy:
+
+When you pay at a shop, you hand the cashier money. You don't let the cashier reach into your pocket, take your wallet, open it, and take the money themselves.
+
+### ⚡ One-liner to remember:
+> Don't talk to strangers; only talk to your direct dependencies.
+
+---
+
+## Q32. What is an Immutable Object?
+
+### Concept:
+
+An object whose state cannot be modified after it is created. To change it, you must create a new object with the new values. Essential for concurrency and functional programming.
+
+### Example:
+
+```typescript
+class Point {
+  constructor(public readonly x: number, public readonly y: number) {}
+
+  move(dx: number, dy: number): Point {
+    // Returns NEW object, doesn't change current one
+    return new Point(this.x + dx, this.y + dy);
+  }
+}
+
+const p1 = new Point(0, 0);
+const p2 = p1.move(10, 10);
+console.log(p1 === p2); // false
+```
+
+### Analogy:
+
+A finalized contract signed in ink. You can't erase a line to change it. You have to draft a *new* contract (copy the old one + changes) and sign that one.
+
+### ⚡ One-liner to remember:
+> Immutable = Once created, never changed; helps avoid side effects.
+
+---
+
+## Q33. What is the difference between Static and Dynamic Binding?
+
+### Concept:
+
+- **Static Binding (Early):** The method to call is determined at compile-time (e.g., static methods, overloaded methods, private methods). Faster.
+- **Dynamic Binding (Late):** The method to call is determined at runtime based on the actual object type (e.g., overridden methods in inheritance). Enables polymorphism.
+
+### Example:
+
+```typescript
+class Parent {
+  static show() { console.log("Static Parent"); } // Static Binding
+  display() { console.log("Dynamic Parent"); }    // Dynamic Binding
+}
+
+class Child extends Parent {
+  static show() { console.log("Static Child"); }
+  display() { console.log("Dynamic Child"); }
+}
+
+const obj: Parent = new Child();
+obj.display(); // "Dynamic Child" (Runtime decision based on object)
+Parent.show(); // "Static Parent" (Compile-time decision based on class)
+```
+
+### Analogy:
+
+- **Static:** A set menu at a wedding. You picked "Chicken" months ago. That's what you get.
+- **Dynamic:** A la carte dining. You decide what to eat *when* you are sitting at the table (runtime).
+
+### ⚡ One-liner to remember:
+> Static = Decided by compiler; Dynamic = Decided by runtime object type.
+
+---
+
+## Q34. What are Access Modifiers and why are they important?
+
+### Concept:
+
+Keywords that set the visibility of classes, methods, and properties to control encapsulation.
+- **Public:** Accessible from anywhere.
+- **Private:** Accessible only within the class.
+- **Protected:** Accessible within the class and subclasses.
+
+### Example:
+
+```typescript
+class Base {
+  public a = 1;
+  protected b = 2;
+  private c = 3;
+}
+
+class Derived extends Base {
+  test() {
+    console.log(this.a); // OK
+    console.log(this.b); // OK
+    // console.log(this.c); // Error: Private
+  }
+}
+```
+
+### Analogy:
+
+Your house security:
+- **Public:** The front porch (anyone can stand there).
+- **Protected:** The living room (only family/guests invited inside can enter).
+- **Private:** Your personal diary (only you can see it).
+
+### ⚡ One-liner to remember:
+> Access Modifiers define who is allowed to touch your data.

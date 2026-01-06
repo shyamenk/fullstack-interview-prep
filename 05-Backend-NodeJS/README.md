@@ -390,7 +390,7 @@ class AuthService {
     });
   }
 
-  static verifyToken(token) {
+  static verifyToken(token) {.
     return jwt.verify(token, process.env.JWT_SECRET);
   }
 }
@@ -579,3 +579,15 @@ describe('Logger', () => {
 - [ ] Production deployment achieved
 
 **Target**: Master Node.js fundamentals and advanced concepts for backend development interviews
+
+## 📝 Interview Questions & Answers
+
+For a comprehensive set of interview questions and detailed answers, please see the [Questions and Answers](./questions-and-answers.md) file.
+
+The Q&A file covers the following topics in depth:
+
+*   **Core Concepts & Asynchronous Programming:** Event Loop, `process.nextTick` vs `setImmediate`, Concurrency, Promises, `async/await`, Callback Hell, Buffers vs Streams, Reactive Programming, and `libuv`.
+*   **Performance & Scalability:** Handling CPU-bound tasks, Clustering, `fork` vs `spawn`, API Optimization, Memory Leak Debugging, and Caching Strategies.
+*   **Architecture & Design Patterns:** Structuring large applications, Middleware, Observer, Decorator patterns, RESTful API principles, Real-time Communication (WebSockets vs SSE), and Dependency Injection.
+*   **Security:** Preventing XSS, CSRF, SQL Injection, secure JWT handling, managing sensitive data, DoS attack prevention, and the Principle of Least Privilege.
+*   **Testing & Deployment:** Testing strategies (Unit, Integration, E2E), CI/CD pipelines, environment variable management, Logging & Monitoring, and the role of a Reverse Proxy.
